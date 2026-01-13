@@ -84,4 +84,25 @@ public class LicenseMappingService : ILicenseMappingService
         int csvMappedType = GetAzureDevOpsLicenseType(csvAccessLevel);
         return csvMappedType == adoLicenseType;
     }
+
+    /// <summary>
+    /// Gets a valid license type for adding a new user.
+    /// Azure DevOps requires new users to be added with at least Basic (1) license.
+    /// Stakeholder (0) cannot be assigned during user creation.
+    /// </summary>
+    public int GetLicenseTypeForNewUser(string csvAccessLevel)
+    {
+        var requestedLicenseType = GetAzureDevOpsLicenseType(csvAccessLevel);
+        
+        // Azure DevOps API doesn't allow adding users with Stakeholder (0) license
+        // Must use Basic (1) or higher when adding new users
+        if (requestedLicenseType == 0)
+        {
+            _logger.LogWarning($"Cannot add new users with Stakeholder license. Will add as Basic (1) instead.");
+            _logger.LogInfo($"After user is added, you can manually downgrade to Stakeholder in the Azure DevOps portal if needed.");
+            return 1; // Use Basic instead
+        }
+        
+        return requestedLicenseType;
+    }
 }

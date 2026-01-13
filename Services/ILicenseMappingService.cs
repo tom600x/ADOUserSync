@@ -26,4 +26,13 @@ public interface ILicenseMappingService
     /// <param name="adoLicenseType">Azure DevOps license type</param>
     /// <returns>True if equivalent, false otherwise</returns>
     bool AreEquivalent(string csvAccessLevel, int adoLicenseType);
+
+    /// <summary>
+    /// Gets a valid license type for adding a new user.
+    /// Azure DevOps requires new users to be added with at least Basic (1) license.
+    /// Stakeholder (0) cannot be assigned during user creation.
+    /// </summary>
+    /// <param name="csvAccessLevel">Access level from CSV</param>
+    /// <returns>License type suitable for adding new users (minimum 1/Basic)</returns>
+    int GetLicenseTypeForNewUser(string csvAccessLevel);
 }

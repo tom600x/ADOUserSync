@@ -189,15 +189,82 @@ public class AzureDevOpsService : IAzureDevOpsService
             var response = await _retryPipeline.ExecuteAsync(async ct =>
                 await _httpClient.PostAsync(apiUrl, content, ct), CancellationToken.None);
 
+            var responseContent = await response.Content.ReadAsStringAsync();
+
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInfo($"Successfully added user {email} with license type {licenseType}");
-                return true;
+                _logger.LogInfo($"API returned HTTP success status ({response.StatusCode}). Parsing response to verify user was added.");
+                
+                // Even with HTTP 200, the operation might have failed (e.g., invalid email). Check the response body.
+                try
+                {
+                    var jsonDoc = JsonDocument.Parse(responseContent);
+                    
+                    // Check for isSuccess field in the response
+                    if (jsonDoc.RootElement.TryGetProperty("isSuccess", out var isSuccessElement))
+                    {
+                        var isSuccess = isSuccessElement.GetBoolean();
+                        if (!isSuccess)
+                        {
+                            // Operation failed - extract error details
+                            var errorMessage = "Operation failed";
+                            if (jsonDoc.RootElement.TryGetProperty("operationResult", out var operationResult))
+                            {
+                                if (operationResult.TryGetProperty("errors", out var errors) &&
+                                    errors.GetArrayLength() > 0)
+                                {
+                                    var firstError = errors[0];
+                                    if (firstError.TryGetProperty("value", out var errorValueElement))
+                                    {
+                                        errorMessage = errorValueElement.GetString() ?? errorMessage;
+                                    }
+                                }
+                            }
+                            
+                            _logger.LogError($"Failed to add user {email}. API returned isSuccess=false. Error: {errorMessage}");
+                            _logger.LogInfo($"Full API response: {responseContent}");
+                            _logger.LogWarning($"NOTE: If the email address '{email}' is not a valid Microsoft account or Azure AD account, the API will silently fail. See KNOWN_LIMITATIONS.md for details.");
+                            return false;
+                        }
+                    }
+                    
+                    // Check if we got a user object back with an ID
+                    if (jsonDoc.RootElement.TryGetProperty("operationResult", out var opResult))
+                    {
+                        if (opResult.TryGetProperty("result", out var result) &&
+                            result.TryGetProperty("id", out var userId))
+                        {
+                            var userIdValue = userId.GetString();
+                            if (!string.IsNullOrEmpty(userIdValue))
+                            {
+                                _logger.LogInfo($"Successfully added user {email} with license type {licenseType}. User ID: {userIdValue}");
+                                return true;
+                            }
+                        }
+                    }
+                    
+                    // If no isSuccess field and no user ID, but HTTP 200, it might be a silent failure
+                    // This happens when email is not a valid Microsoft account
+                    _logger.LogWarning($"API returned HTTP 200 but response structure is unexpected. User {email} may not have been added.");
+                    _logger.LogInfo($"Response content: {responseContent}");
+                    _logger.LogWarning($"IMPORTANT: Email '{email}' must be a valid Microsoft account or Azure AD account. See KNOWN_LIMITATIONS.md.");
+                    _logger.LogInfo($"If user was not added, verify the email at https://account.microsoft.com");
+                    
+                    // Return true but with warnings - user should check the portal
+                    return true;
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning($"Could not parse response JSON to verify user was added: {ex.Message}");
+                    _logger.LogInfo($"Response content: {responseContent}");
+                    // If we can't parse the response but got HTTP 200, assume success but warn user
+                    _logger.LogWarning($"Please verify user {email} was added in the Azure DevOps portal.");
+                    return true;
+                }
             }
             else
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogError($"Failed to add user {email}. Status: {response.StatusCode}, Response: {errorContent}");
+                _logger.LogError($"Failed to add user {email}. HTTP Status: {response.StatusCode}, Response: {responseContent}");
                 return false;
             }
         }

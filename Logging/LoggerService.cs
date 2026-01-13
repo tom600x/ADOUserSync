@@ -160,6 +160,12 @@ public class LoggerService : ILoggerService, IDisposable
             sb.AppendLine("NOTE: This was a DRY RUN. No changes were applied.");
             sb.AppendLine("Run again without --dry-run flag to apply changes.");
         }
+        else if (summary.UsersAdded > 0)
+        {
+            sb.AppendLine("IMPORTANT: Please verify added users in Azure DevOps portal.");
+            sb.AppendLine("If users don't appear, their email addresses may not be valid Microsoft accounts.");
+            sb.AppendLine("See KNOWN_LIMITATIONS.md for details.");
+        }
 
         sb.AppendLine("============================================");
 

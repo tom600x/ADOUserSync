@@ -142,14 +142,24 @@ public class SyncService : ISyncService
                 operation.Type = OperationType.Add;
                 operation.Status = dryRun ? "Will be added" : "Adding...";
 
-                _logger.LogInfo($"[ADD] User: {csvUser.Username} | License: {csvUser.AccessLevel} | Status: {operation.Status}");
+                // Get the appropriate license type for adding new users (minimum Basic/1)
+                var licenseTypeForNewUser = _licenseMappingService.GetLicenseTypeForNewUser(csvUser.AccessLevel);
+                
+                if (licenseTypeForNewUser != targetLicenseType)
+                {
+                    _logger.LogWarning($"[ADD] User: {csvUser.Username} | Requested: {csvUser.AccessLevel} | Will add as: {_licenseMappingService.GetCsvAccessLevel(licenseTypeForNewUser)} (Azure DevOps limitation)");
+                }
+                else
+                {
+                    _logger.LogInfo($"[ADD] User: {csvUser.Username} | License: {csvUser.AccessLevel} | Status: {operation.Status}");
+                }
 
                 if (!dryRun)
                 {
                     operation.Success = await _adoService.AddUserAsync(
                         csvUser.Username,
                         csvUser.Name,
-                        targetLicenseType);
+                        licenseTypeForNewUser);
 
                     operation.Status = operation.Success ? "Added successfully" : "Failed to add";
                     
@@ -159,10 +169,19 @@ public class SyncService : ISyncService
                         operation.ErrorMessage = "Failed to add user to Azure DevOps";
                         _logger.LogError($"Failed to add user {csvUser.Username}");
                     }
+                    else if (licenseTypeForNewUser != targetLicenseType)
+                    {
+                        operation.Status = $"Added as {_licenseMappingService.GetCsvAccessLevel(licenseTypeForNewUser)} (adjust to {csvUser.AccessLevel} manually if needed)";
+                        _logger.LogWarning($"User {csvUser.Username} was added with {_licenseMappingService.GetCsvAccessLevel(licenseTypeForNewUser)} license. To use {csvUser.AccessLevel}, please adjust manually in Azure DevOps portal.");
+                    }
                 }
                 else
                 {
                     operation.Success = true;
+                    if (licenseTypeForNewUser != targetLicenseType)
+                    {
+                        operation.Status = $"Will be added as {_licenseMappingService.GetCsvAccessLevel(licenseTypeForNewUser)} (Azure DevOps limitation)";
+                    }
                 }
             }
             else

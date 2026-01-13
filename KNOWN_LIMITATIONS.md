@@ -1,6 +1,43 @@
 # Known Limitations and Important Notes
 
-## 1. Email Addresses Must Be Valid Microsoft Accounts
+## 1. Cannot Add New Users with Stakeholder License
+
+### Issue
+When **adding a new user**, Azure DevOps API does not allow assigning a **Stakeholder** license (license type 0). New users must be added with at least a **Basic** license (license type 1) or higher.
+
+### Why This Happens
+This is a limitation of the Azure DevOps User Entitlements API. The API returns error code 5000 with message: **"A user cannot be assigned an Account-None license."**
+
+### What the Tool Does
+The tool automatically handles this limitation:
+1. **Detects** when CSV specifies Stakeholder for a new user
+2. **Adds the user with Basic license instead**
+3. **Logs a warning** explaining the limitation
+4. **Provides instructions** to manually downgrade if needed
+
+### Example Output
+```
+[WARNING] Cannot add new users with Stakeholder license. Will add as Basic (1) instead.
+[INFO] After user is added, you can manually downgrade to Stakeholder in the Azure DevOps portal if needed.
+[ADD] User: user@example.com | Requested: Stakeholder | Will add as: Basic (Azure DevOps limitation)
+```
+
+### Manual Downgrade Steps
+After the user is added with Basic license, you can manually change to Stakeholder:
+1. Go to: `https://dev.azure.com/{org}/_settings/users`
+2. Find the user
+3. Click the ellipsis menu (...)
+4. Select "Change access level"
+5. Choose "Stakeholder"
+
+### Note
+- This only affects **new users** being added
+- **Existing users** can be updated to/from Stakeholder without issues
+- The tool handles this automatically and provides clear warnings
+
+---
+
+## 2. Email Addresses Must Be Valid Microsoft Accounts
 
 ### Issue
 The Azure DevOps API will return **HTTP 200 OK (success)** when adding users, but **the users won't actually be added** if their email addresses don't correspond to valid Microsoft accounts.
@@ -42,7 +79,7 @@ If you need to test the tool:
 
 ---
 
-## 2. External License Sources (MSDN/Visual Studio Subscriptions)
+## 3. External License Sources (MSDN/Visual Studio Subscriptions)
 
 ### Issue
 Users who have licenses provided through **MSDN** or **Visual Studio subscriptions** cannot have their Azure DevOps access level changed through the API.
