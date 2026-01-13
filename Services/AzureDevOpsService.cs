@@ -48,67 +48,97 @@ public class AzureDevOpsService : IAzureDevOpsService
     public async Task<List<AzureDevOpsUser>> GetAllUsersAsync()
     {
         var users = new List<AzureDevOpsUser>();
-        var apiUrl = $"https://vsaex.dev.azure.com/{GetOrganizationName()}/_apis/userentitlements?api-version=7.2-preview.3";
+        var baseApiUrl = $"https://vsaex.dev.azure.com/{GetOrganizationName()}/_apis/userentitlements?api-version=7.2-preview.3";
+        string? continuationToken = null;
+        int pageCount = 0;
 
         try
         {
-            _logger.LogInfo($"Fetching users from Azure DevOps: GET {apiUrl}");
+            do
+            {
+                pageCount++;
+                var apiUrl = string.IsNullOrEmpty(continuationToken) 
+                    ? baseApiUrl 
+                    : $"{baseApiUrl}&continuationToken={Uri.EscapeDataString(continuationToken)}";
 
-            var response = await _retryPipeline.ExecuteAsync(async ct =>
-                await _httpClient.GetAsync(apiUrl, ct), CancellationToken.None);
+                _logger.LogInfo($"Fetching users from Azure DevOps (page {pageCount}): GET {apiUrl}");
 
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogError($"Failed to get users. Status: {response.StatusCode}");
-                return users;
-            }
+                var response = await _retryPipeline.ExecuteAsync(async ct =>
+                    await _httpClient.GetAsync(apiUrl, ct), CancellationToken.None);
 
-            var content = await response.Content.ReadAsStringAsync();
-            _logger.LogInfo($"API Response (first 500 chars): {content.Substring(0, Math.Min(500, content.Length))}"); // Debug: Log partial JSON
-            
-            var jsonDoc = JsonDocument.Parse(content);
-
-            // Check for different possible array property names
-            JsonElement valueElement;
-            bool foundArray = false;
-            
-            if (jsonDoc.RootElement.TryGetProperty("value", out valueElement))
-            {
-                foundArray = true;
-            }
-            else if (jsonDoc.RootElement.TryGetProperty("members", out valueElement))
-            {
-                foundArray = true;
-            }
-            else if (jsonDoc.RootElement.TryGetProperty("items", out valueElement))
-            {
-                foundArray = true;
-            }
-            
-            if (foundArray)
-            {
-                _logger.LogInfo($"Found array with {valueElement.GetArrayLength()} items");
-                
-                foreach (var item in valueElement.EnumerateArray())
+                if (!response.IsSuccessStatusCode)
                 {
-                    var user = ParseUserFromJson(item);
-                    if (user != null)
+                    _logger.LogError($"Failed to get users. Status: {response.StatusCode}");
+                    break;
+                }
+
+                var content = await response.Content.ReadAsStringAsync();
+                if (pageCount == 1)
+                {
+                    _logger.LogInfo($"API Response (first 500 chars): {content.Substring(0, Math.Min(500, content.Length))}");
+                }
+                
+                var jsonDoc = JsonDocument.Parse(content);
+
+                // Check for continuation token
+                continuationToken = null;
+                if (jsonDoc.RootElement.TryGetProperty("continuationToken", out var tokenElement))
+                {
+                    continuationToken = tokenElement.GetString();
+                    if (!string.IsNullOrEmpty(continuationToken))
                     {
-                        _logger.LogInfo($"Parsed user: {user.Email} with license type {user.AccessLevel.LicenseType}");
-                        users.Add(user);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Failed to parse a user from JSON");
+                        _logger.LogInfo($"Continuation token found. More users available on next page.");
                     }
                 }
-            }
-            else
-            {
-                _logger.LogWarning($"No recognized array property found in API response. Root element type: {jsonDoc.RootElement.ValueKind}");
-            }
 
-            _logger.LogInfo($"Successfully fetched {users.Count} users from Azure DevOps");
+                // Check for different possible array property names
+                JsonElement valueElement;
+                bool foundArray = false;
+                
+                if (jsonDoc.RootElement.TryGetProperty("value", out valueElement))
+                {
+                    foundArray = true;
+                }
+                else if (jsonDoc.RootElement.TryGetProperty("members", out valueElement))
+                {
+                    foundArray = true;
+                }
+                else if (jsonDoc.RootElement.TryGetProperty("items", out valueElement))
+                {
+                    foundArray = true;
+                }
+                
+                if (foundArray)
+                {
+                    var arrayLength = valueElement.GetArrayLength();
+                    _logger.LogInfo($"Found {arrayLength} users on page {pageCount}");
+                    
+                    foreach (var item in valueElement.EnumerateArray())
+                    {
+                        var user = ParseUserFromJson(item);
+                        if (user != null)
+                        {
+                            if (pageCount == 1 || users.Count % 50 == 0)
+                            {
+                                _logger.LogInfo($"Parsed user: {user.Email} with license type {user.AccessLevel.LicenseType}");
+                            }
+                            users.Add(user);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Failed to parse a user from JSON");
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning($"No recognized array property found in API response. Root element type: {jsonDoc.RootElement.ValueKind}");
+                    break;
+                }
+
+            } while (!string.IsNullOrEmpty(continuationToken));
+
+            _logger.LogInfo($"Successfully fetched {users.Count} users from Azure DevOps across {pageCount} page(s)");
         }
         catch (Exception ex)
         {
@@ -214,14 +244,57 @@ public class AzureDevOpsService : IAzureDevOpsService
 
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInfo($"API returned success status. Response: {responseContent}");
-                _logger.LogInfo($"Successfully updated user {userId} to license type {licenseType}");
-                _logger.LogWarning($"Note: If user has MSDN/VS subscription license, the change may not take effect. Check Azure DevOps portal to verify.");
-                return true;
+                _logger.LogInfo($"API returned HTTP success status ({response.StatusCode}). Parsing response to check operation result.");
+                
+                // Even with HTTP 200, the operation might have failed. Check the response body.
+                try
+                {
+                    var jsonDoc = JsonDocument.Parse(responseContent);
+                    
+                    // Check for isSuccess field in the response
+                    if (jsonDoc.RootElement.TryGetProperty("isSuccess", out var isSuccessElement))
+                    {
+                        var isSuccess = isSuccessElement.GetBoolean();
+                        if (!isSuccess)
+                        {
+                            // Operation failed - extract error details
+                            var errorMessage = "Operation failed";
+                            if (jsonDoc.RootElement.TryGetProperty("operationResults", out var operationResults) &&
+                                operationResults.GetArrayLength() > 0)
+                            {
+                                var firstResult = operationResults[0];
+                                if (firstResult.TryGetProperty("errors", out var errors) &&
+                                    errors.GetArrayLength() > 0)
+                                {
+                                    var firstError = errors[0];
+                                    if (firstError.TryGetProperty("value", out var errorValueElement))
+                                    {
+                                        errorMessage = errorValueElement.GetString() ?? errorMessage;
+                                    }
+                                }
+                            }
+                            
+                            _logger.LogError($"Failed to update user {userId}. API returned isSuccess=false. Error: {errorMessage}");
+                            _logger.LogInfo($"Full API response: {responseContent}");
+                            return false;
+                        }
+                    }
+                    
+                    _logger.LogInfo($"Successfully updated user {userId} to license type {licenseType}");
+                    _logger.LogWarning($"Note: If user has MSDN/VS subscription license, the change may not take effect. Check Azure DevOps portal to verify.");
+                    return true;
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning($"Could not parse response JSON to verify operation success: {ex.Message}");
+                    _logger.LogInfo($"Response content: {responseContent}");
+                    // If we can't parse the response but got HTTP 200, assume success
+                    return true;
+                }
             }
             else
             {
-                _logger.LogError($"Failed to update user {userId}. Status: {response.StatusCode}, Response: {responseContent}");
+                _logger.LogError($"Failed to update user {userId}. HTTP Status: {response.StatusCode}, Response: {responseContent}");
                 return false;
             }
         }
