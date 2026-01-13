@@ -1,0 +1,10 @@
+Name,Username,Access Level,Last Access,Date Created,License Status,License Source
+"Test User 1",testuser1@example.com,Basic,Never,1/12/2026,Pending,Direct
+"Test User 2",testuser2@example.com,Stakeholder,Never,1/12/2026,Pending,Direct
+"Test User 3",testuser3@example.com,Basic + Test Plans,Never,1/12/2026,Pending,Direct
+"Test User 4",testuser4@example.com,Visual Studio Enterprise subscription,Never,1/12/2026,Pending,Direct
+"Test User 5",testuser5@example.com,Visual Studio Enterprise subscription,1/11/2026,11/21/2019,Active,Direct
+"Test User 6",testuser6@example.com,Visual Studio Enterprise subscription,1/11/2026,11/22/2019,Active,Direct
+"Test User 7",testuser7@example.com,Visual Studio Enterprise subscription,1/10/2026,9/25/2024,Active,Direct
+"Test User 8",testuser8@example.com,Stakeholder,1/11/2026,3/29/2023,Active,Direct
+"Test User 9",testuser9@example.com,Basic + Test Plans,Never,1/12/2026,Pending,Direct
